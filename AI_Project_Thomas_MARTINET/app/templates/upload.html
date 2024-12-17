@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload and Analyze</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e1e2f, #2b2b44);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Arial', sans-serif;
+        }
+        .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            max-width: 1200px;
+            width: 100%;
+            gap: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            box-shadow: 0px 8px 20px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+        .form-card, .results-card {
+            flex: 1;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 15px;
+            box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        .form-title, .results-title {
+            font-weight: bold;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #6e8efb, #a777e3);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+        }
+        canvas {
+            margin-top: 20px;
+            max-width: 100%;
+            border-radius: 10px;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+        }
+        .list-group-item {
+            font-size: 1rem;
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(200, 200, 200, 0.5);
+            color: #1e1e2f;
+            border-radius: 5px;
+        }
+        .progress {
+            height: 20px;  /* augmenté pour être plus épais */
+            line-height: 20px;
+            margin-top: 10px;
+            border-radius: 5px;
+            overflow: hidden;
+            background: rgba(255,255,255,0.3);
+        }
+        .progress-bar {
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            color: #fff;
+            font-size: 0.8rem;
+            line-height: 20px; /* Ajusté pour centrer le texte verticalement */
+        }
+        .btn {
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            border: none;
+            color: white;
+            font-size: 1rem;
+            padding: 10px 20px;
+            border-radius: 8px;
+            transition: all 0.3s ease-in-out;
+            margin-top: 20px;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0px 8px 20px rgba(110, 142, 251, 0.8);
+        }
+    </style>
+    <script>
+        // Le nom du manager est injecté directement par le template Jinja
+        const managerName = "{{ manager_name }}";
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const imageInput = document.getElementById('image');
+            const canvasOverlay = document.getElementById('canvasOverlay');
+            const ctx = canvasOverlay.getContext('2d');
+            const predictionsList = document.getElementById('predictionsList');
+            const risksList = document.getElementById('risksList');
+            const downloadModal = new bootstrap.Modal(document.getElementById('downloadModal'));
+
+            let img = new Image();
+            let imageDataURL = null;
+            let treatedImageDataURL = null;
+
+            imageInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.onload = () => {
+                            canvasOverlay.width = img.width;
+                            canvasOverlay.height = img.height;
+                            ctx.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+                            ctx.drawImage(img, 0, 0);
+                            imageDataURL = e.target.result;
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            document.getElementById('predictForm').onsubmit = async function(event) {
+                event.preventDefault();
+                const formData = new FormData(this);
+                try {
+                    const response = await fetch("/predict", { method: "POST", body: formData });
+                    if (response.ok) {
+                        const data = await response.json();
+
+                        ctx.clearRect(0, 0, canvasOverlay.width, canvasOverlay.height);
+                        ctx.drawImage(img, 0, 0);
+
+                        data.predictions.forEach(prediction => {
+                            const [x, y, width, height] = prediction.bbox;
+                            const confPercent = (prediction.confidence * 100).toFixed(2);
+                            ctx.strokeStyle = 'red';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x, y, width, height);
+                            ctx.fillStyle = 'red';
+                            ctx.font = '14px Arial';
+                            ctx.fillText(`${prediction.class} (${confPercent}%)`, x, y - 5);
+                        });
+
+                        treatedImageDataURL = canvasOverlay.toDataURL('image/jpeg');
+
+                        predictionsList.innerHTML = data.predictions.map(prediction => {
+                            const confPercent = (prediction.confidence * 100).toFixed(2);
+                            return `
+                                <li class="list-group-item">
+                                    <strong>${prediction.class}</strong>
+                                    <div class="progress mt-2">
+                                        <div class="progress-bar" role="progressbar" style="width: ${confPercent}%;" aria-valuenow="${confPercent}" aria-valuemin="0" aria-valuemax="100">
+                                            ${confPercent}%
+                                        </div>
+                                    </div>
+                                </li>`;
+                        }).join('');
+
+                        risksList.innerHTML = data.risks.map(risk => `
+                            <li class="list-group-item">${risk}</li>
+                        `).join('');
+
+                        document.getElementById('modalDownloadBtn').onclick = () => generatePDF(data, managerName);
+                        downloadModal.show();
+                    } else {
+                        const error = await response.json();
+                        alert("Error: " + error.error);
+                    }
+                } catch (err) {
+                    alert("An error occurred: " + err.message);
+                }
+            };
+
+            const generatePDF = (data, managerName) => {
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF();
+
+                pdf.setFont("helvetica", "bold");
+                pdf.setFontSize(18);
+                pdf.text("Analysis Report", 10, 15);
+                pdf.setFontSize(12);
+                pdf.setFont("helvetica", "normal");
+
+                if (managerName && managerName.trim() !== "") {
+                    pdf.text("Manager: " + managerName, 10, 25);
+                } else {
+                    pdf.text("Manager: Not specified", 10, 25);
+                }
+
+                pdf.line(10, 30, 200, 30);
+
+                pdf.setFontSize(14);
+                pdf.setFont("helvetica", "bold");
+                pdf.text("Predictions:", 10, 40);
+
+                pdf.setFontSize(12);
+                pdf.setFont("helvetica", "normal");
+                let currentY = 50;
+                data.predictions.forEach((prediction, index) => {
+                    const confPercent = (prediction.confidence * 100).toFixed(2);
+                    pdf.text(`${index + 1}. ${prediction.class}: ${confPercent}%`, 10, currentY);
+                    currentY += 10;
+                });
+
+                pdf.setFontSize(14);
+                pdf.setFont("helvetica", "bold");
+                pdf.text("Risks:", 10, currentY + 10);
+
+                pdf.setFontSize(12);
+                pdf.setFont("helvetica", "normal");
+                let risksStart = currentY + 20;
+                data.risks.forEach((risk, index) => {
+                    pdf.text(`- ${risk}`, 10, risksStart + index * 10);
+                });
+
+                let imageY = risksStart + data.risks.length * 10 + 20;
+
+                if (treatedImageDataURL) {
+                    const imgWidth = 150;
+                    const imgHeight = (canvasOverlay.height / canvasOverlay.width) * imgWidth;
+                    pdf.addImage(treatedImageDataURL, 'JPEG', 30, imageY, imgWidth, imgHeight);
+                }
+
+                pdf.setDrawColor(150);
+                pdf.rect(5, 5, 200, 287, 'S');
+
+                pdf.save('analysis_report.pdf');
+            };
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Section: Image Upload -->
+        <div class="form-card">
+            <h1 class="form-title">Select a picture from your device</h1>
+            <form id="predictForm" action="/predict" method="POST" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="image" class="form-label">Choose Image</label>
+                    <input type="file" class="form-control" id="image" name="image" accept="image/*" required>
+                </div>
+                <button type="submit" class="btn w-100">EXECUTE</button>
+            </form>
+            <canvas id="canvasOverlay"></canvas>
+        </div>
+
+        <!-- Right Section: Predictions and Risks -->
+        <div class="results-card">
+            <h1 class="results-title">Results</h1>
+            <div class="mt-4">
+                <h3>Class Predictions</h3>
+                <ul class="list-group" id="predictionsList"></ul>
+            </div>
+            <div class="mt-4">
+                <h3>Risks</h3>
+                <ul class="list-group" id="risksList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for PDF Download -->
+    <div class="modal fade" id="downloadModal" tabindex="-1" aria-labelledby="downloadModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content text-dark">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="downloadModalLabel">Download Report</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    Your analysis is complete. Would you like to download the report?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button id="modalDownloadBtn" class="btn btn-primary">Download PDF</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

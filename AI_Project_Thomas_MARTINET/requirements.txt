@@ -1,0 +1,8 @@
+Flask>=3.0.3
+pandas>=2.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.3.27
+opencv-python>=4.5.0
+PyYAML>=5.4
+Pillow
